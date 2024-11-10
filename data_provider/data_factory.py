@@ -44,6 +44,33 @@ def data_provider(args, flag):
             num_workers=args.num_workers,
             drop_last=drop_last)
         return data_set, data_loader
+    
+
+    elif args.task_name == 'short_term_forecast_classification':
+        # 加载短期预测分类任务的数据集
+        data_set = Data(
+            args=args,
+            root_path=args.root_path,
+            data_path=args.data_path,
+            flag=flag,
+            size=[args.seq_len, args.label_len, args.pred_len],
+            features=args.features,
+            target=args.target,
+            timeenc=timeenc,
+            freq=freq,
+        )
+        data_loader = DataLoader(
+            data_set,
+            batch_size=batch_size,
+            shuffle=shuffle_flag,
+            num_workers=args.num_workers,
+            drop_last=drop_last,
+            collate_fn=lambda x: collate_fn(x, max_len=args.seq_len)
+        )
+    # 返回数据集和数据加载器
+        return data_set, data_loader
+    
+
     elif args.task_name == 'classification':
         drop_last = False
         data_set = Data(
@@ -74,7 +101,7 @@ def data_provider(args, flag):
             target=args.target,
             timeenc=timeenc,
             freq=freq,
-            seasonal_patterns=args.seasonal_patterns
+            #seasonal_patterns=args.seasonal_patterns
         )
         print(flag, len(data_set))
         data_loader = DataLoader(
