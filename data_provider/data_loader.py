@@ -206,20 +206,22 @@ class Dataset_ETT_minute(Dataset):
 
 class Dataset_Custom(Dataset):
     def __init__(self, args, root_path, flag='train', size=None,
-                 features='S', data_path='ETTh1.csv',
-                 target='episode_starts', scale=True, timeenc=0, freq='h', seasonal_patterns=None):
+                 features='MS', data_path='LabelDaily.csv',
+                 target='risk_label', scale=True, timeenc=0, freq='d'):
         # size [seq_len, label_len, pred_len]
         self.args = args
-        # info
         if size is None:
-            self.seq_len = 24 * 4 * 4
+            self.seq_len = 24 * 4 * 4  # 192, 可调整
             self.label_len = 24 * 4
             self.pred_len = 24 * 4
         else:
             self.seq_len = size[0]
             self.label_len = size[1]
             self.pred_len = size[2]
-        # init
+
+        self.max_seq_len = self.seq_len
+
+        # 初始化
         assert flag in ['train', 'test', 'val']
         type_map = {'train': 0, 'val': 1, 'test': 2}
         self.set_type = type_map[flag]
@@ -238,20 +240,35 @@ class Dataset_Custom(Dataset):
         self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path, self.data_path))
 
-        # Specify only the required input features and target
-        input_features = ['pattern_a_channel_1', 'pattern_a_channel_2', 'pattern_b_channel_1', 'pattern_b_channel_2']
-        target_feature = self.target
-
-        # Select columns
-        df_raw = df_raw[['date'] + input_features + [target_feature]]
+        # 指定输入特征和目标标签
+        print("用的就是这个custom")
+        input_features = ['pattern_a+b_channel_1', 'pattern_a+b_channel_2']
+        df_raw = df_raw[['date'] + input_features + [self.target]]
+        self.feature_df = df_raw[input_features]
+        self.class_names = df_raw[self.target].unique().tolist()
+        # 数据切分
         num_train = int(len(df_raw) * 0.7)
         num_test = int(len(df_raw) * 0.2)
         num_vali = len(df_raw) - num_train - num_test
+        print("总数据量df_raw：",len(df_raw),", shape = ",df_raw.shape)
+        print("train num：",num_train)
+        print("test num：",num_test)
+        print("vali num：",num_vali)
         border1s = [0, num_train - self.seq_len, len(df_raw) - num_test - self.seq_len]
         border2s = [num_train, num_train + num_vali, len(df_raw)]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
+        """
+        所以 border1s = 第一个 border， border2s = 第二个 border，
+        border1 & border2 一起定义了一段 数据组的开始和结束， 可能的情况分别是：
+        1. train = 0, border1[0] = border1s[0] = 0: 开始是从0开始
+        border2[0] = border2s[num_train] = train 数量（0.7 * data）
+        2. vali = 1, border1[1] = border1s[num_train - self.seq_len] = vali开始的地方, 也就是 1944-96 = 1848
+        border2[1] = border2s[num_train + num_vali] - 在这个case 里， 就是 [1944+277] = 2221； 
+        所以 vali 的 size = 373 / 375; 符合
+        """
 
+        # 标准化
         if self.features == 'M' or self.features == 'MS':
             df_data = df_raw[input_features]
         elif self.features == 'S':
@@ -264,6 +281,7 @@ class Dataset_Custom(Dataset):
         else:
             data = df_data.values
 
+        # 处理时间戳
         df_stamp = df_raw[['date']][border1:border2]
         df_stamp['date'] = pd.to_datetime(df_stamp.date)
         if self.timeenc == 0:
@@ -278,30 +296,74 @@ class Dataset_Custom(Dataset):
 
         self.data_x = data[border1:border2]
         self.data_y = df_raw[[self.target]].values[border1:border2]
-
+        print("border1:", border1, "border2", border2)
+        print("Shape of data_x:", self.data_x.shape)
+        print("Shape of data_y:", self.data_y.shape)
         if self.set_type == 0 and self.args.augmentation_ratio > 0:
             self.data_x, self.data_y, augmentation_tags = run_augmentation_single(self.data_x, self.data_y, self.args)
 
         self.data_stamp = data_stamp
+        self.timeseries = self.data_x
+        print("检查 self x 的 shape ------应该有俩通道-------",self.data_x.shape)
 
     def __getitem__(self, index):
+        # 滑动窗口生成样本
+        print("读到了getitem----------------------")
         s_begin = index
         s_end = s_begin + self.seq_len
-        r_begin = s_end - self.label_len
-        r_end = r_begin + self.label_len + self.pred_len
+        print("s_begin, s_end:",s_begin, s_end)
+        print("index",index)
 
+
+        
+        # 单一标签输出（使用序列的最后一个timestamp的标签）
+        pred_begin = s_end
+        pred_end = pred_begin + self.pred_len
+        print("pred_begin, pred_end:",pred_begin, pred_end)
+        '''
+        # Ensure the prediction end does not exceed data length
+        if pred_end > len(self.data_y):
+            print("pred_end", pred_end, "y length:", len(self.data_y),flush=True)
+            raise IndexError("Prediction window exceeds available data length.")
+        '''
+        if pred_end > len(self.data_y):
+            print(f"Skipping index {index} as it exceeds data length.")
+            return None  # 或其他适当的返回
+
+
+                # 序列输入
         seq_x = self.data_x[s_begin:s_end]
-        seq_y = self.data_y[r_begin:r_end]
+        seq_y = self.data_y[pred_begin:pred_end].reshape(-1)  # Reshape to (pred_len,)
+        seq_x = torch.tensor(seq_x).float()
+        seq_x[torch.isnan(seq_x)] = 0
+            
+        # 时间标记（如果需要）
         seq_x_mark = self.data_stamp[s_begin:s_end]
-        seq_y_mark = self.data_stamp[r_begin:r_end]
 
-        return seq_x, seq_y, seq_x_mark, seq_y_mark
+        return seq_x, seq_y
 
     def __len__(self):
-        return len(self.data_x) - self.seq_len - self.pred_len + 1
+        return max(0, len(self.data_y) - self.seq_len - self.pred_len + 1)
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
+
+    def last_insample_window(self):
+        """
+        The last window of insample size of all timeseries.
+        This function does not support batching and does not reshuffle timeseries.
+
+        :return: Last insample window of all timeseries. Shape "timeseries, insample size"
+        """
+        insample = np.zeros((len(self.timeseries), self.seq_len, self.data_x.shape[-1]))
+        insample_mask = np.zeros((len(self.timeseries), self.seq_len))
+        print("Shape of x in last_insample_window:", insample.shape)
+        print("Shape of x in last_insample_mask:", insample_mask.shape)
+        for i, ts in enumerate(self.timeseries):
+            ts_last_window = ts[-self.seq_len:]
+            insample[i, -len(ts):] = ts_last_window
+            insample_mask[i, -len(ts):] = 1.0
+        return insample, insample_mask
 
 
 
@@ -744,3 +806,4 @@ class UEAloader(Dataset):
 
     def __len__(self):
         return len(self.all_IDs)
+
