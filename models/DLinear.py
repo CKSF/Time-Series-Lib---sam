@@ -9,7 +9,7 @@ class Model(nn.Module):
     Paper link: https://arxiv.org/pdf/2205.13504.pdf
     """
 
-    def __init__(self, configs, individual=True):
+    def __init__(self, configs, individual=False):
         """
         individual: Bool, whether shared model among different variates.
         """
@@ -28,31 +28,41 @@ class Model(nn.Module):
         if self.individual:
             self.Linear_Seasonal = nn.ModuleList()
             self.Linear_Trend = nn.ModuleList()
+            self.Linear_X = nn.ModuleList()
 
             for i in range(self.channels):
                 self.Linear_Seasonal.append(
                     nn.Linear(self.seq_len, self.pred_len))
                 self.Linear_Trend.append(
                     nn.Linear(self.seq_len, self.pred_len))
+                self.Linear_X.append(
+                    nn.Linear(self.seq_len, self.pred_len))
 
                 self.Linear_Seasonal[i].weight = nn.Parameter(
                     (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
                 self.Linear_Trend[i].weight = nn.Parameter(
                     (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
+                self.Linear_X[i].weight = nn.Parameter(
+                    (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
         else:
             self.Linear_Seasonal = nn.Linear(self.seq_len, self.pred_len)
             self.Linear_Trend = nn.Linear(self.seq_len, self.pred_len)
+            self.Linear_X = nn.Linear(self.seq_len, self.pred_len)
 
             self.Linear_Seasonal.weight = nn.Parameter(
                 (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
             self.Linear_Trend.weight = nn.Parameter(
                 (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
+            self.Linear_X.weight = nn.Parameter(
+                (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
 
-        if self.task_name == 'classification':
-            self.projection = nn.Linear(
-                configs.enc_in * configs.seq_len, configs.num_class)
+        #self.projection = nn.Linear(self.pred_len  , configs.c_out, bias=True)
+        self.projection = nn.Linear(20, 20, bias=True)
+
 
     def encoder(self, x):
+
+        """
         seasonal_init, trend_init = self.decompsition(x)
         print("seasonal_init", seasonal_init.shape, seasonal_init)
         print("trend_init", trend_init.shape, trend_init)
@@ -72,21 +82,32 @@ class Model(nn.Module):
         else:
             seasonal_output = self.Linear_Seasonal(seasonal_init)
             trend_output = self.Linear_Trend(trend_init)
-        x = seasonal_output + trend_output
-        print("dlinear x(shape 2 3 feature 换位置):", x.shape, x)
-            # 应用 sigmoid 以获得 0 到 1 的概率
+        x = seasonal_output + trend_output # (16*2*10)
+        """
+        # 可以不decomposition:
         x = x.permute(0, 2, 1)
-        print("dlinear x(shape after permute):", x.shape, x)
-        return x
+        print("dlinear x(shape 2 3 feature 换位置):", x.shape) # printed (16, 2, 96)
+
+        X_output = self.Linear_X(x) # encod -> (16, 2, 10)
+
+        print("X_output shape", X_output.shape) # printed (16, 2, 10)
+
+        x = x.permute(0, 2, 1)
+        #print("dlinear x(shape after permute):", x.shape)
+        return X_output
 
     def forecast(self, x_enc):
         # Encoder
+        print("x_enc shape:", x_enc.shape)
         enc_out = self.encoder(x_enc)
+        print("x beofre reshape(enc_out)", enc_out.shape)
         output = enc_out.reshape(enc_out.shape[0], -1)
+        print("x after reshape", output.shape)
         output = self.projection(output)
-        output = torch.softmax(output)  # 输出的维度应为 (batch_size, 1)
-    
-        return output
+        print("output after projection", output.shape)
+        projected_output = output.view(16, 10, 2)
+        print("projected output shape:", projected_output)
+        return projected_output
 
     def imputation(self, x_enc):
         # Encoder
