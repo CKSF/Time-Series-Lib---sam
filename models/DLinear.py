@@ -9,7 +9,7 @@ class Model(nn.Module):
     Paper link: https://arxiv.org/pdf/2205.13504.pdf
     """
 
-    def __init__(self, configs, individual=False):
+    def __init__(self, configs, individual=True):
         """
         individual: Bool, whether shared model among different variates.
         """
@@ -54,6 +54,9 @@ class Model(nn.Module):
 
     def encoder(self, x):
         seasonal_init, trend_init = self.decompsition(x)
+        print("seasonal_init", seasonal_init.shape, seasonal_init)
+        print("trend_init", trend_init.shape, trend_init)
+
         seasonal_init, trend_init = seasonal_init.permute(
             0, 2, 1), trend_init.permute(0, 2, 1)
         if self.individual:
@@ -70,11 +73,20 @@ class Model(nn.Module):
             seasonal_output = self.Linear_Seasonal(seasonal_init)
             trend_output = self.Linear_Trend(trend_init)
         x = seasonal_output + trend_output
-        return x.permute(0, 2, 1)
+        print("dlinear x(shape 2 3 feature 换位置):", x.shape, x)
+            # 应用 sigmoid 以获得 0 到 1 的概率
+        x = x.permute(0, 2, 1)
+        print("dlinear x(shape after permute):", x.shape, x)
+        return x
 
     def forecast(self, x_enc):
         # Encoder
-        return self.encoder(x_enc)
+        enc_out = self.encoder(x_enc)
+        output = enc_out.reshape(enc_out.shape[0], -1)
+        output = self.projection(output)
+        output = torch.softmax(output)  # 输出的维度应为 (batch_size, 1)
+    
+        return output
 
     def imputation(self, x_enc):
         # Encoder
@@ -95,7 +107,7 @@ class Model(nn.Module):
         return output
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast' or self.task_name == 'short_term_forecast_classification'or self.task_name == 'long_term_foreclass':
             dec_out = self.forecast(x_enc)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
         if self.task_name == 'imputation':
@@ -108,3 +120,4 @@ class Model(nn.Module):
             dec_out = self.classification(x_enc)
             return dec_out  # [B, N]
         return None
+
