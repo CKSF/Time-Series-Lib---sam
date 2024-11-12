@@ -157,10 +157,12 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                     print("print from foreclass train - outputs:", outputs.shape, outputs)
                     f_dim = -1 if self.args.features == 'MS' else 0
                     outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                    print("outputs 刚读完数据：",outputs.shape)
                     batch_y = batch_y[:, -self.args.pred_len:].view(-1)
+                    print("y 变形 - 对应 output变形",batch_y.shape)
 
                     outputs = outputs.reshape(-1, outputs.size(-1)) # 添加的
-                    print("output shape:",outputs.shape, outputs)
+                    print("output shape 变形:",outputs.shape, outputs)
                     loss = criterion(outputs, batch_y.long())
                     train_loss.append(loss.item())
 
@@ -339,3 +341,4 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         np.save(folder_path + 'true.npy', trues)
 
         return
+
