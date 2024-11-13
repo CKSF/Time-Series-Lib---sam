@@ -14,6 +14,8 @@ class Model(nn.Module):
         individual: Bool, whether shared model among different variates.
         """
         super(Model, self).__init__()
+        self.d_model = configs.d_model
+        self.c_out = configs.c_out
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
         if self.task_name == 'classification' or self.task_name == 'anomaly_detection' or self.task_name == 'imputation':
@@ -24,7 +26,9 @@ class Model(nn.Module):
         self.decompsition = series_decomp(configs.moving_avg)
         self.individual = individual
         self.channels = configs.enc_in
-
+        #print("d_model:", self.d_model)
+        #print("seq_len:", self.seq_len)
+        
         if self.individual:
             self.Linear_Seasonal = nn.ModuleList()
             self.Linear_Trend = nn.ModuleList()
@@ -35,6 +39,7 @@ class Model(nn.Module):
                     nn.Linear(self.seq_len, self.pred_len))
                 self.Linear_Trend.append(
                     nn.Linear(self.seq_len, self.pred_len))
+                #print("Linear para if individual (seq, dmodel)", self.seq_len, self.d_model)
                 self.Linear_X.append(
                     nn.Linear(self.seq_len, self.pred_len))
 
@@ -47,17 +52,18 @@ class Model(nn.Module):
         else:
             self.Linear_Seasonal = nn.Linear(self.seq_len, self.pred_len)
             self.Linear_Trend = nn.Linear(self.seq_len, self.pred_len)
-            self.Linear_X = nn.Linear(self.seq_len, self.pred_len)
+            #print("Linear para if NOT individual (seq, dmodel)", self.seq_len, self.d_model)
+            self.Linear_X = nn.Linear(self.seq_len, self.d_model)
 
-            self.Linear_Seasonal.weight = nn.Parameter(
-                (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
-            self.Linear_Trend.weight = nn.Parameter(
-                (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
-            self.Linear_X.weight = nn.Parameter(
-                (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
+            # self.Linear_Seasonal.weight = nn.Parameter(
+            #     (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
+            # self.Linear_Trend.weight = nn.Parameter(
+            #     (1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))
+            # self.Linear_X.weight = nn.Parameter(
+            #     (1 / self.d_model) * torch.ones([self.pred_len, self.d_model]))
 
         #self.projection = nn.Linear(self.pred_len  , configs.c_out, bias=True)
-        self.projection = nn.Linear(20, 20, bias=True)
+        self.projection = nn.Linear(self.d_model * self.c_out, self.pred_len, bias=True)
 
 
     def encoder(self, x):
@@ -86,11 +92,11 @@ class Model(nn.Module):
         """
         # 可以不decomposition:
         x = x.permute(0, 2, 1)
-        print("dlinear x(shape 2 3 feature 换位置):", x.shape) # printed (16, 2, 96)
+        #print("encoder 内部 permute original x:", x.shape) # printed (16, 2, 96)
 
-        X_output = self.Linear_X(x) # encod -> (16, 2, 10)
+        X_output = self.Linear_X(x) # encod -> (16, 2, d_model)
 
-        print("X_output shape", X_output.shape) # printed (16, 2, 10)
+        #print("Linear encode 完以后", X_output.shape) # printed (16, 2, d_model)
 
         x = x.permute(0, 2, 1)
         #print("dlinear x(shape after permute):", x.shape)
@@ -98,16 +104,16 @@ class Model(nn.Module):
 
     def forecast(self, x_enc):
         # Encoder
-        print("x_enc shape:", x_enc.shape)
+        #print("进入 model 的 x 形状", x_enc.shape) # （16, 96, 2）
         enc_out = self.encoder(x_enc)
-        print("x beofre reshape(enc_out)", enc_out.shape)
-        output = enc_out.reshape(enc_out.shape[0], -1)
-        print("x after reshape", output.shape)
+        #print("encode 完了 x 形状", enc_out.shape) #（16, 2, 64）
+        output = enc_out.reshape(enc_out.shape[0], -1) 
+        #print("x after reshape", output.shape) # （16， 128）
+        output = nn.ReLU()(output)
+        #print("x after 激活函数：",output.shape) #（16， 128）
         output = self.projection(output)
-        print("output after projection", output.shape)
-        projected_output = output.view(16, 10, 2)
-        print("projected output shape:", projected_output)
-        return projected_output
+        #print("x / output after projection - 去除 number of class", output.shape) # （16， 10）
+        return output
 
     def imputation(self, x_enc):
         # Encoder
@@ -130,7 +136,7 @@ class Model(nn.Module):
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast' or self.task_name == 'short_term_forecast_classification'or self.task_name == 'long_term_foreclass':
             dec_out = self.forecast(x_enc)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+            return dec_out[:, -self.pred_len:]  # [B, L, D]
         if self.task_name == 'imputation':
             dec_out = self.imputation(x_enc)
             return dec_out  # [B, L, D]
@@ -141,4 +147,6 @@ class Model(nn.Module):
             dec_out = self.classification(x_enc)
             return dec_out  # [B, N]
         return None
+
+
 
