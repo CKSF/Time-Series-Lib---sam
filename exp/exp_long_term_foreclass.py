@@ -185,9 +185,10 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
             preds_train = data_tensor.numpy()
             print("shape of preds_train:",preds_train.shape, preds_train)
             print("shape of trues_train:",trues_train.shape)
+            probs_train = preds_train.reshape(-1)
             preds_train = preds_train.reshape(-1)
             trues_train = trues_train.reshape(-1)
-            print("train打平shape of preds_train:",preds_train.shape)
+            print("train打平shape of preds_train:",probs_train.shape)
             print("train打平shape of trues_train:",trues_train.shape)
 
             # Binarize predictions
@@ -198,13 +199,10 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
 
 
             # Calculate metrics
-            precision = precision_score(trues_train, preds_train, average='weighted')
-            recall = recall_score(trues_train, preds_train, average='weighted')
-            f1 = f1_score(trues_train, preds_train, average='weighted')
-            if len(np.unique(trues_train)) == 2:
-                auc_score = roc_auc_score(trues_train, preds_train)
-            else:
-                auc_score = roc_auc_score(trues_train, preds_train, average='weighted', multi_class='ovr')
+            precision = precision_score(trues_train, preds_train, average='binary', pos_label=1)
+            recall = recall_score(trues_train, preds_train, average='binary', pos_label=1)
+            f1 = f1_score(trues_train, preds_train, average='binary', pos_label=1)
+            auc_score = roc_auc_score(trues_train, probs_train)
 
             print(f"Epoch: {epoch+1} | Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}, AUC: {auc_score:.4f}")
 
@@ -297,8 +295,7 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         trues = trues.reshape(-1)  # 变成 (5460,)
         data_tensor = torch.from_numpy(preds)
         data_tensor = torch.sigmoid(data_tensor)
-        preds = data_tensor.numpy()
-        preds = preds.astype(int)
+        probs = data_tensor.numpy()
         trues = trues.astype(int)
         #print("Final preds shape:", preds.shape)
         #print("Final trues shape:", trues.shape)
@@ -337,7 +334,7 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)"""
         threshold = 0.5  # 可以调整为其他值，例如通过验证集优化
-        preds = (preds > threshold).astype(int)
+        preds = (probs > threshold).astype(int)
 
 
         # 计算指标
@@ -346,11 +343,7 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         f1 = f1_score(trues, preds, average='weighted')
 
         # ROC 和 AUC
-        if len(np.unique(trues)) == 2:  # 二分类任务
-            fpr, tpr, _ = roc_curve(trues, preds, pos_label=1)
-            auc_score = auc(fpr, tpr)
-        else:
-            auc_score = roc_auc_score(trues, preds, average='weighted', multi_class='ovr')
+        auc_score = roc_auc_score(trues, probs)
 
         # 打印结果
         print('precision: {:.4f}, recall: {:.4f}, f1: {:.4f}, auc: {:.4f}'.format(
@@ -367,4 +360,3 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         np.save(folder_path + 'true.npy', trues)
 
         return
-
