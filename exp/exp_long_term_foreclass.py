@@ -18,9 +18,9 @@ warnings.filterwarnings('ignore')
 class Exp_Long_Term_Foreclass(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Foreclass, self).__init__(args)
-        print("before define self device:Using device:", self.device)
+        #print("before define self device:Using device:", self.device)
         self.device = torch.device(f"cuda:{args.gpu}" if args.use_gpu and torch.cuda.is_available() else "cpu")
-        print("after define self device:Using device:", self.device)
+        #print("after define self device:Using device:", self.device)
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
@@ -38,18 +38,18 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         model_optim = optim.Adam(self.model.parameters(), lr=self.args.learning_rate)
         return model_optim
 
-    def _select_criterion(self, loss_name='CrossEntropy'): #改 默认 criterion
+    def _select_criterion(self, loss_name='BCEWithLogits'): #改 默认 criterion
         """print("before define weight Using device:", self.device)
 
         count_0 = 1647
         count_1 = 297
-        class_weights = torch.tensor([1.0, count_0 / count_1], dtype=torch.float).to(self.device)
+        # class_weights = torch.tensor([1.0, count_0 / count_1], dtype=torch.float).to(self.device)
         print("after define weight Using device:", self.device)
         print("Class weights:", class_weights)"""
 #-------------------------------------------------
-        if loss_name == 'CrossEntropy':
-            
-            return nn.CrossEntropyLoss()
+        if loss_name == 'BCEWithLogits':
+            # class_weights = torch.tensor([0.1, 0.7], dtype=torch.float).to(self.device)
+            return nn.BCEWithLogitsLoss()
         else:
             raise ValueError(f"Unsupported loss function: {loss_name}")
 
@@ -62,6 +62,7 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
             for i, (batch_x, batch_y) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float()
+                #print("validation batch_x shape:",batch_x.shape, "validation batch_y shape:", batch_y.shape)
 
                 #batch_x_mark = batch_x_mark.float().to(self.device)
                 #batch_y_mark = batch_y_mark.float().to(self.device)
@@ -77,17 +78,12 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                 else:
                     #outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     outputs = self.model(batch_x, None, dec_inp, None)
-                    print("print from forclass vali - outputshape:", outputs.shape, outputs)
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                batch_y = batch_y[:, -self.args.pred_len:].view(-1)
+                    #print("validation encoder(model) output shape:", outputs.shape)
 
                 pred = outputs.detach().cpu()
                 true = batch_y.detach().cpu().squeeze()
-                pred = pred.reshape(-1, pred.size(-1))
-                true = true.long()
-                print("pred shape:", pred.shape)
-                print("true shape:", true.shape)
+                #print("pred shape:", pred.shape)
+                #print("true shape:", true.shape)
 
                 loss = criterion(pred, true)
 
@@ -154,16 +150,10 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                 else:
                     #outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     outputs = self.model(batch_x, None, dec_inp, None)
-                    print("print from foreclass train - outputs:", outputs.shape, outputs)
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    print("outputs 刚读完数据：",outputs.shape)
-                    batch_y = batch_y[:, -self.args.pred_len:].view(-1)
-                    print("y 变形 - 对应 output变形",batch_y.shape)
+                    #print("print from foreclass train - encoded outputs:", outputs.shape) # (16, 10)
+                    #print("batch_y / trues shape",batch_y.shape)
 
-                    outputs = outputs.reshape(-1, outputs.size(-1)) # 添加的
-                    print("output shape 变形:",outputs.shape, outputs)
-                    loss = criterion(outputs, batch_y.long())
+                    loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -206,7 +196,7 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         if test:
-            print('loading model')
+            #print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
 
         preds = []
@@ -237,9 +227,6 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                     outputs = self.model(batch_x, None, dec_inp, None)
                     #outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, :]
-                batch_y = batch_y[:, -self.args.pred_len:].view(-1)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
                 if test_data.scale and self.args.inverse:
@@ -247,20 +234,18 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                     outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
                     batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
         
-                outputs = outputs[:, :, f_dim:]
-                print("我看看怎么个事1？", outputs.shape, outputs)
-                batch_y = batch_y.reshape(-1, 1)
-                batch_y = batch_y[:, :]
-                print("我看看怎么个事 batch y？", batch_y.shape, batch_y)
+
+                #print("test output shape？", outputs.shape)
+                #print("test batch y shape？", batch_y.shape)
 
                 pred = outputs
                 true = batch_y
-                pred = pred.reshape(-1, 2)  # 将 pred 转换为 [40, 2]
+
 
                 preds.append(pred)
                 trues.append(true)
-                print("shape of pred", pred.shape, pred)
-                print("shape of true", true.shape, true)
+                #print("shape of pred", pred.shape)
+                #print("shape of true", true.shape)
                 if i % 20 == 0:
                     input = batch_x.detach().cpu().numpy()
                     if test_data.scale and self.args.inverse:
@@ -272,12 +257,12 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
 
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
-        np.set_printoptions(threshold=np.inf)
-        print('test shape:', preds.shape, trues.shape, preds, trues)
-        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        print('test shape:', preds.shape, trues.shape, preds, trues)
-        np.set_printoptions(threshold=1000)
+        preds = preds.reshape(-1)  # 变成 (5460,)
+        trues = trues.reshape(-1)  # 变成 (5460,)
+        preds = preds.astype(int)
+        trues = trues.astype(int)
+        #print("Final preds shape:", preds.shape)
+        #print("Final trues shape:", trues.shape)
 
         # result save
         folder_path = './results/' + setting + '/'
@@ -312,31 +297,33 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)"""
-        preds = np.argmax(preds, axis=-1)  # 将 (5460, 2) 转换为 (5460,)
-        preds = preds.squeeze()  # 将 (1, 5460) 转换为 (5460,)
-        trues = trues.squeeze() 
+        threshold = 0.5  # 可以调整为其他值，例如通过验证集优化
+        preds = (preds > threshold).astype(int)
 
-        print("finally preds:", preds,"finally trues:", trues)  
-        print("Shape of preds:", preds.shape)
-        print("Shape of trues:", trues.shape)
+
+        # 计算指标
         precision = precision_score(trues, preds, average='weighted')
         recall = recall_score(trues, preds, average='weighted')
         f1 = f1_score(trues, preds, average='weighted')
-        auc_score = roc_auc_score(trues, preds, average='weighted', multi_class='ovr')  # 若为多分类任务
-        fpr, tpr, _ = roc_curve(trues, preds, pos_label=1)  # 若为二分类任务
-        ouc_score = auc(fpr, tpr) if len(np.unique(trues)) == 2 else "N/A for multi-class"
 
-        # 打印输出
-        print('precision:{}, recall:{}, f1:{}, auc:{}, ouc:{}'.format(precision, recall, f1, auc_score, ouc_score))
+        # ROC 和 AUC
+        if len(np.unique(trues)) == 2:  # 二分类任务
+            fpr, tpr, _ = roc_curve(trues, preds, pos_label=1)
+            auc_score = auc(fpr, tpr)
+        else:
+            auc_score = roc_auc_score(trues, preds, average='weighted', multi_class='ovr')
 
+        # 打印结果
+        print('precision: {:.4f}, recall: {:.4f}, f1: {:.4f}, auc: {:.4f}'.format(
+            precision, recall, f1, auc_score))
         # 写入结果文件
         with open("result_long_term_forecast.txt", 'a') as f:
             f.write(setting + "  \n")
-            f.write('precision:{}, recall:{}, f1:{}, auc:{}, ouc:{}'.format(precision, recall, f1, auc_score, ouc_score))
+            f.write('precision:{}, recall:{}, f1:{}, auc:{}'.format(precision, recall, f1, auc_score))
             f.write('\n\n')
 
         # 保存结果
-        np.save(folder_path + 'metrics.npy', np.array([precision, recall, f1, auc_score, ouc_score]))
+        np.save(folder_path + 'metrics.npy', np.array([precision, recall, f1, auc_score]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
 
