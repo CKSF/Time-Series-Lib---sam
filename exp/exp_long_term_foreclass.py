@@ -116,6 +116,8 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
+            preds_train = []
+            trues_train = []
 
             self.model.train()
             epoch_time = time.time()
@@ -150,10 +152,11 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                 else:
                     #outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     outputs = self.model(batch_x, None, dec_inp, None)
-                    #print("print from foreclass train - encoded outputs:", outputs.shape) # (16, 10)
+                    #print("print from foreclass train - encoded outputs:", outputs.shape, outputs) # (16, 10)
                     #print("batch_y / trues shape",batch_y.shape)
 
                     loss = criterion(outputs, batch_y)
+
                     train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -171,6 +174,39 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                 else:
                     loss.backward()
                     model_optim.step()
+                preds_train.append(outputs.detach().cpu().numpy())
+                trues_train.append(batch_y.detach().cpu().numpy())
+
+                        #print metric of each epoch
+            preds_train = np.concatenate(preds_train, axis=0)
+            trues_train = np.concatenate(trues_train, axis=0)
+            data_tensor = torch.from_numpy(preds_train)
+            data_tensor = torch.sigmoid(data_tensor)
+            preds_train = data_tensor.numpy()
+            print("shape of preds_train:",preds_train.shape, preds_train)
+            print("shape of trues_train:",trues_train.shape)
+            preds_train = preds_train.reshape(-1)
+            trues_train = trues_train.reshape(-1)
+            print("train打平shape of preds_train:",preds_train.shape)
+            print("train打平shape of trues_train:",trues_train.shape)
+
+            # Binarize predictions
+            threshold = 0.5  # 可调整
+            preds_train = (preds_train > threshold).astype(int)
+            trues_train = trues_train.astype(int)
+            print("preds:",preds_train, "trues:",trues_train)
+
+
+            # Calculate metrics
+            precision = precision_score(trues_train, preds_train, average='weighted')
+            recall = recall_score(trues_train, preds_train, average='weighted')
+            f1 = f1_score(trues_train, preds_train, average='weighted')
+            if len(np.unique(trues_train)) == 2:
+                auc_score = roc_auc_score(trues_train, preds_train)
+            else:
+                auc_score = roc_auc_score(trues_train, preds_train, average='weighted', multi_class='ovr')
+
+            print(f"Epoch: {epoch+1} | Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}, AUC: {auc_score:.4f}")
 
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
@@ -259,6 +295,9 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         trues = np.concatenate(trues, axis=0)
         preds = preds.reshape(-1)  # 变成 (5460,)
         trues = trues.reshape(-1)  # 变成 (5460,)
+        data_tensor = torch.from_numpy(preds)
+        data_tensor = torch.sigmoid(data_tensor)
+        preds = data_tensor.numpy()
         preds = preds.astype(int)
         trues = trues.astype(int)
         #print("Final preds shape:", preds.shape)
