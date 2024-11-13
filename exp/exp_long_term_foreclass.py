@@ -3,6 +3,7 @@ from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
 import torch
+import matplotlib.pyplot as plt
 import torch.nn as nn
 from torch import optim
 import os
@@ -48,8 +49,15 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         print("Class weights:", class_weights)"""
 #-------------------------------------------------
         if loss_name == 'BCEWithLogits':
-            # class_weights = torch.tensor([0.1, 0.7], dtype=torch.float).to(self.device)
-            return nn.BCEWithLogitsLoss()
+            # 根据正负样本比例设置 pos_weight
+            positive_samples = 297  
+            negative_samples = 1647  
+            pos_weight = torch.tensor(negative_samples / positive_samples, dtype=torch.float).to(self.device)
+            
+            print(f"Using pos_weight: {pos_weight.item()}")  
+            return nn.BCEWithLogitsLoss(
+                pos_weight=pos_weight
+            )
         else:
             raise ValueError(f"Unsupported loss function: {loss_name}")
 
@@ -61,14 +69,14 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
             #for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
             for i, (batch_x, batch_y) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float()
+                batch_y = batch_y.float().to(self.device)
                 #print("validation batch_x shape:",batch_x.shape, "validation batch_y shape:", batch_y.shape)
 
                 #batch_x_mark = batch_x_mark.float().to(self.device)
                 #batch_y_mark = batch_y_mark.float().to(self.device)
 
                 # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:]).float()
+                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:]).float().to(self.device)
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
                 if self.args.use_amp:
@@ -80,14 +88,14 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                     outputs = self.model(batch_x, None, dec_inp, None)
                     #print("validation encoder(model) output shape:", outputs.shape)
 
-                pred = outputs.detach().cpu()
-                true = batch_y.detach().cpu().squeeze()
+                pred = outputs
+                true = batch_y.squeeze()
                 #print("pred shape:", pred.shape)
                 #print("true shape:", true.shape)
 
                 loss = criterion(pred, true)
 
-                total_loss.append(loss)
+                total_loss.append(loss.item())
         total_loss = np.average(total_loss)
         self.model.train()
         return total_loss
@@ -118,6 +126,8 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
             train_loss = []
             preds_train = []
             trues_train = []
+            #print("preds_train list",preds_train) 检查是否为 空
+            #print("trues_train list",trues_train)
 
             self.model.train()
             epoch_time = time.time()
@@ -174,7 +184,9 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
                 else:
                     loss.backward()
                     model_optim.step()
+                    
                 preds_train.append(outputs.detach().cpu().numpy())
+                #print("shape of preds_train inside loop:", preds_train)
                 trues_train.append(batch_y.detach().cpu().numpy())
 
                         #print metric of each epoch
@@ -183,25 +195,28 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
             data_tensor = torch.from_numpy(preds_train)
             data_tensor = torch.sigmoid(data_tensor)
             preds_train = data_tensor.numpy()
-            print("shape of preds_train:",preds_train.shape, preds_train)
-            print("shape of trues_train:",trues_train.shape)
+            #print("shape of preds_train:",preds_train.shape, preds_train)
+            #print("shape of trues_train:",trues_train.shape)
             probs_train = preds_train.reshape(-1)
             preds_train = preds_train.reshape(-1)
             trues_train = trues_train.reshape(-1)
-            print("train打平shape of preds_train:",probs_train.shape)
-            print("train打平shape of trues_train:",trues_train.shape)
+            #print("train打平shape of preds_train:",probs_train.shape)
+            #print("train打平shape of trues_train:",trues_train.shape)
 
             # Binarize predictions
-            threshold = 0.5  # 可调整
+            threshold = 0.45  # 可调整
             preds_train = (preds_train > threshold).astype(int)
             trues_train = trues_train.astype(int)
-            print("preds:",preds_train, "trues:",trues_train)
+            #print("preds:",preds_train, "trues:",trues_train)
 
 
             # Calculate metrics
             precision = precision_score(trues_train, preds_train, average='binary', pos_label=1)
             recall = recall_score(trues_train, preds_train, average='binary', pos_label=1)
             f1 = f1_score(trues_train, preds_train, average='binary', pos_label=1)
+            """precision = precision_score(trues_train, preds_train, average='weighted')
+            recall = recall_score(trues_train, preds_train, average='weighted')
+            f1 = f1_score(trues_train, preds_train, average='weighted')"""
             auc_score = roc_auc_score(trues_train, probs_train)
 
             print(f"Epoch: {epoch+1} | Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}, AUC: {auc_score:.4f}")
@@ -296,6 +311,7 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         data_tensor = torch.from_numpy(preds)
         data_tensor = torch.sigmoid(data_tensor)
         probs = data_tensor.numpy()
+        prebs = data_tensor.numpy()
         trues = trues.astype(int)
         #print("Final preds shape:", preds.shape)
         #print("Final trues shape:", trues.shape)
@@ -333,14 +349,17 @@ class Exp_Long_Term_Foreclass(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)"""
-        threshold = 0.5  # 可以调整为其他值，例如通过验证集优化
-        preds = (probs > threshold).astype(int)
+        threshold = 0.45  # 可以调整为其他值，例如通过验证集优化
+        preds = (prebs > threshold).astype(int)
 
 
         # 计算指标
-        precision = precision_score(trues, preds, average='weighted')
+        """precision = precision_score(trues, preds, average='weighted')
         recall = recall_score(trues, preds, average='weighted')
-        f1 = f1_score(trues, preds, average='weighted')
+        f1 = f1_score(trues, preds, average='weighted')"""
+        precision = precision_score(trues, preds, average='binary', pos_label=1)
+        recall = recall_score(trues, preds, average='binary', pos_label=1)
+        f1 = f1_score(trues, preds, average='binary', pos_label=1)
 
         # ROC 和 AUC
         auc_score = roc_auc_score(trues, probs)
